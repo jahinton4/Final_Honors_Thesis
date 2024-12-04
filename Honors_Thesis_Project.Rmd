@@ -1,0 +1,281 @@
+---
+title: "Final_Honors_Thesis"
+author: "Jeannie Hinton"
+date: "2024-10-27"
+output: html_document
+---
+#Loading Libraries
+```{r loading libraries}
+knitr::opts_chunk$set(echo = TRUE)
+#loading necessary libraries
+library(tidyverse)
+library(fs)
+library(corrr)
+library(tidymodels)
+```
+
+
+#Wrangling the Data for Processing
+```{r setting up data for wrangling, eval=FALSE}
+#making a file path to be stepped through for a data list below
+file_paths <- dir_ls("raw_data/train_tsv", glob = "*.tsv")
+
+#making a list that stores all of the correlation matrices
+#in an effort to be able to index and extract the matrices for processing
+data_list_train <- file_paths %>%
+  map(~ read_tsv(.x, col_names = FALSE))
+
+#saving data_list as an object for use later
+saveRDS(data_list_train, file = "data/data_list_train.rds")
+```
+
+##Background Work
+```{r background work, eval = FALSE}
+#loads the data_list_train object from the data file for processing
+data_list_train <- readRDS(file = "data/data_list_train.rds")
+#view(data_list_train[[1]])
+#view(data_list_train[[1104]])
+```
+
+```{r create vector of file names, eval = FALSE}
+file_names_list <- list.files(path = "raw_data/train_tsv", pattern = ".tsv", all.files = TRUE, full.names = TRUE)
+simplified_names_list <- sapply(str_split(file_names_list, "_"),'[', 3)
+participant_id_list <- gsub('tsv/sub-', '', simplified_names_list)
+```
+
+```{r extracting correlations and loading into vectors, eval = FALSE}
+# Creating an empty list for storing correlation values
+corr_vals_id_list <- list()
+
+# Loop to read in correlation values and assign them to variables with indexed names
+for (i in seq_along(data_list_train)) {
+  # The pluck function extracts the i-th element from the training data_list
+  corr1 <- pluck(data_list_train, i)
+  
+  # Extract the upper triangular elements. This fills the vector elements by column.
+  # The function upper.tri creates a vector of true/false values. We then select all the true values.
+  upper_vec <- corr1[upper.tri(corr1, diag = FALSE)]
+  
+  
+  # Create a named list combining the participant ids and upper_vec values
+  upper_vec_with_id <- list(participant_id = participant_id_list[i], corr_values = upper_vec)
+  
+
+  # Assign each id and upper_vec values pair to a position in the list
+  corr_vals_id_list[[i]] <- upper_vec_with_id
+}
+
+# Check the list worked correctly
+#print(corr_vals_id_list[[100]])
+#view(data_list_train[[100]])
+
+#store this list of corr values and ids as an r object
+saveRDS(corr_vals_id_list, file = "data/corr_vals_id_list.rds")
+```
+
+```{r changing list to tibble, eval = FALSE}
+# first list element is ID, second is vector of correlations
+# need to put in a dataframe
+list_all <- read_rds("data/corr_vals_id_list.rds")
+
+# created vector with column names for the correlation values:
+names <- paste0("X", seq(1:19900))
+names <- c("id", names)
+ 
+# pass this vector length to ncol parameter
+# and nrow with 0
+corr_data = data.frame(matrix(nrow = 0, ncol = length(names)))
+ 
+# assign column names
+colnames(corr_data) = names
+
+# loop through each participant
+for (i in 1:1104) {
+#grab the next element in the list
+ listrow <- pluck(list_all, i)
+ corr_data[i, 1] <- listrow$participant_id
+ corr_data[i, 2:19901] <- listrow$corr_values #assigning the vector elements to each col
+}
+
+#getting error =  Error in x[[jj]][iseq] <- vjj : replacement has length zero
+
+
+#check first and last ids
+##corr_data[[2]]
+```
+
+
+```{r loads r object of corr values and id df}
+#loads the corr_vals_id_df object from the data file for processing
+corr_data <- readRDS(file = "data/corr_data.rds")
+```
+
+```{r checking corr_data quality}
+sum(is.na(corr_data[[1]]))
+sum(is.null(corr_data[[1]]))
+
+#EDA ON TRAINING DATA
+#using cross validation for tuning and also to get a rmse estimate for each model that i fit
+#missing values in recipe
+#zero variance 
+#dummy variables 
+#start the recipe
+#going down correlation matrix
+#join table and start doing basic visualizations, 5 number summary of a few correlation column
+#pca research, research regularized regression or pca before fitting 
+#caret train or do a workflow
+```
+
+
+##MetaData Work
+
+```{r}
+train_meta <- read_csv("raw_data/metadata/training_metadata.csv")
+train_meta <- train_meta %>% 
+  rename(id = participant_id)
+#view(train_meta)
+#view(train_meta)
+sum(is.na(train_meta))
+
+train_meta %>% 
+  skimr::skim(.)
+#not enough NAs to drop any of these columns entirely
+
+train_meta %>% 
+  count(handedness)
+```
+
+```{r merging tables}
+#joining meta data to the correlation data to create one large dataframe 
+full_table <- left_join(train_meta, corr_data, by = "id")
+
+#changing categorical predictors from char to factors
+full_table <- full_table %>% 
+  mutate(id = as.factor(id),
+         sex = as.factor(sex),
+         study_site = as.factor(study_site),
+         ethnicity = as.factor(ethnicity),
+         race = as.factor(race),
+         handedness = as.factor(handedness), 
+         parent_1_education = as.factor(parent_1_education), 
+         parent_2_education = as.factor(parent_2_education))
+  
+#verifying that the changing of data types worked correctly
+# #full_table %>% 
+#   select(1:14) %>% 
+#   glimpse()
+  
+#saving data_list as an object for use later
+saveRDS(full_table, file = "data/full_table.rds")
+
+#checking to make sure missing values align with what was missing in meta data and not missing in 
+#the correlation data
+#sum(is.na(full_training_table))
+```
+
+```{r load in final table}
+full_table <- readRDS(full_table, file = "data/full_table.rds")
+```
+
+```{r split final table}
+set.seed(123)
+
+#put 80% of the training data into the training set 
+full_data_split <- initial_split(full_table, prop = 0.80)
+
+#create data frames for the two sets:
+train_split <- training(full_data_split)
+test_split  <- testing(full_data_split)
+
+#create r objects to store the training and test splits
+#this is really in an effort to seperate test data entirely into a different file to prevent any 
+#mistaken manipulation of it while manipulating the training data
+saveRDS(train_split, file = "data/train_split.rds")
+saveRDS(test_split, file = "test_data_dont_touch/test_split.rds")
+
+```
+
+
+
+```{r reading in training split}
+train_split <- readRDS(train_split, file = "data/train_split.rds")
+```
+
+
+
+#Preprocessing the Data 
+```{r preprocessing data}
+
+#do we know how the metadata was collected? survey? impacts how to deal with missing values
+
+#confirming that changed data types carried through into the split of the data correctly
+#train_split %>% 
+  # select(1:15) %>% 
+  # glimpse()
+
+
+#handle missing values
+corr_data_rec <- recipe(age ~ ., data = train_split) %>% 
+  step_rm(id) %>% 
+  step_impute_mean() %>% 
+  step_impute_mode()
+
+broom::tidy(corr_data_rec)
+#note that I will not be removing any of these predictors, because the typical threshold for throwing out a column that has missing values is 
+#20% of a predictors' observations should be missing in order to throw out the predictor. This is not the case. Make note of this in write up
+
+
+##you can start by trying a simple approach:  replace with the mean for quantitative variables; replace ##with the mode for categorical variables.
+```
+| Predictor | # Missing Values
+|:-------|:-----------
+| bmi  | 18             
+| ethnicity   | 109             
+| race  | 168            
+| parent_1_education | 183            
+| parent_2_eduction  | 22               
+
+
+```{r models}
+# corr_data_wflow <- 
+#   workflow() %>% 
+#   add_model() %>%  #need to add a model in here
+#   add_recipe(corr_data_rec)
+```
+
+
+```{r training the model}
+# corr_data_fit <- 
+#   corr_data_wflow %>% 
+#   fit(data = train_split) %>% 
+#   tidy()
+```
+
+
+###General tidymodel steps
+Create a recipe for feature engineering steps to be applied to the training data (these steps will also automatically be applied later to the test data)
+
+Fit the model to the training data after applying these steps
+
+Evaluate model/tune model parameters using resampling
+
+Using the model estimated from the training data, predict outcomes for the test data and evaluate performance of the model on the test data
+
+
+
+### Feature Engineering
+
+While your project’s needs may vary, here is a suggested order of potential steps that should work for most problems:
+
+1.  Filter out zero or near-zero variance features.
+
+2.  Perform imputation if required.
+
+3.  Normalize to resolve numeric feature skewness.
+
+4.  Standardize (center and scale) numeric features.
+
+5.  Perform dimension reduction (e.g., PCA) on numeric features.
+
+6.  One-hot or dummy encode categorical features.
+

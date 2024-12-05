@@ -170,13 +170,15 @@ saveRDS(full_table, file = "data/full_table.rds")
 
 #checking to make sure missing values align with what was missing in meta data and not missing in 
 #the correlation data
-#sum(is.na(full_training_table))
+#sum(is.na(full_table))
 ```
 
 ```{r load in final table}
 full_table <- readRDS(full_table, file = "data/full_table.rds")
 ```
 
+
+#Splitting the Data
 ```{r split final table}
 set.seed(123)
 
@@ -202,6 +204,13 @@ train_split <- readRDS(train_split, file = "data/train_split.rds")
 ```
 
 
+###Exploratory Data Analysis
+```{r }
+
+```
+
+
+#Missing Value Analysis
 
 #Preprocessing the Data 
 ```{r preprocessing data}
@@ -217,8 +226,15 @@ train_split <- readRDS(train_split, file = "data/train_split.rds")
 #handle missing values
 corr_data_rec <- recipe(age ~ ., data = train_split) %>% 
   step_rm(id) %>% 
-  step_impute_mean() %>% 
-  step_impute_mode()
+  step_normalize(all_numeric_predictors()) %>% 
+  step_impute_mean(all_double_predictors()) %>% 
+  step_impute_mode(all_factor_predictors()) %>% 
+  step_dummy(train_split$study_site, 
+             train_split$race, 
+             train_split$handedness, 
+             train_split$parent_1_education, 
+             train_split$parent_2_education) %>% 
+  step_zv(all_predictors())
 
 broom::tidy(corr_data_rec)
 #note that I will not be removing any of these predictors, because the typical threshold for throwing out a column that has missing values is 
